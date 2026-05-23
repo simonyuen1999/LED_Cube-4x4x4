@@ -11,9 +11,11 @@ part in the designing and developing digital and analog circuit design which
  based on  microcontroller platforms.
 **************************************************************************************/
 #include "ICStation_Light_cube.h"
+#include <avr/pgmspace.h>
+
 int ICStation_Light_cube::LEDPin[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 int ICStation_Light_cube::PlanePin[4] = {16, 17, 18, 19};
-unsigned char ICStation_Light_cube::PatternTable[]= {
+const unsigned char ICStation_Light_cube::PatternTable[] PROGMEM = {
 B0001,B0001,B0000,B0000,B0000,B0001,B0000,B0000,B0000,B0001,B0000,B0000,B0000,B0000,B0000,B0000,10,
 B0011,B0001,B0000,B0000,B0000,B0001,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,10,
 B0111,B0001,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,B0000,10,
@@ -109,40 +111,38 @@ int ICStation_Light_cube::clockPin=0;  //SH_CP of 74HC595
 int ICStation_Light_cube::latchPin=1;  //ST_CP of 74HC595 
 int ICStation_Light_cube::dataPin=3;  //DS of 74HC595 
 int ICStation_Light_cube::HC_595_E = 2;  
-int ICStation_Light_cube::LED_Pin16= 4;
-int ICStation_Light_cube::LED_Pin17= 5;
-int ICStation_Light_cube::LED_Pin18= 6;
-int ICStation_Light_cube::LED_Pin19= 7;
+int ICStation_Light_cube::LED_Layer0 = 4;
+int ICStation_Light_cube::LED_Layer1 = 5;
+int ICStation_Light_cube::LED_Layer2 = 6;
+int ICStation_Light_cube::LED_Layer3 = 7;
 
- #define ICStation_delay_MAX 10000  // 特效时间设置
- int ICStation_Light_cube::ICStation_delay =ICStation_delay_MAX;
+#define ICStation_delay_MAX 10000  // 特效时间设置
+int ICStation_Light_cube::ICStation_delay =ICStation_delay_MAX;
 
  
- int ICStation_Light_cube::PatternIdx =0;// indexes which byte from pattern buffer
+int ICStation_Light_cube::PatternIdx =0;// indexes which byte from pattern buffer
 int ICStation_Light_cube::PatternMax = sizeof(PatternTable);
+unsigned char ICStation_Light_cube::_frameBuffer[16] = {0};
+int ICStation_Light_cube::_scanLayer = 0;
 
 
 
 ICStation_Light_cube:: ICStation_Light_cube()
 {
-  
+  pinMode( latchPin, OUTPUT );
+  pinMode( clockPin, OUTPUT );
+  pinMode( dataPin, OUTPUT );
+  pinMode( HC_595_E, OUTPUT );
 
-pinMode( latchPin, OUTPUT );
-pinMode( clockPin, OUTPUT );
-pinMode( dataPin, OUTPUT );
-pinMode( HC_595_E, OUTPUT );
+  pinMode( LED_Layer0, OUTPUT );
+  pinMode( LED_Layer1, OUTPUT );
+  pinMode( LED_Layer2, OUTPUT );
+  pinMode( LED_Layer3, OUTPUT );
 
-pinMode( LED_Pin16, OUTPUT );
-pinMode( LED_Pin17, OUTPUT );
-pinMode( LED_Pin18, OUTPUT );
-pinMode( LED_Pin19, OUTPUT );
-
-digitalWrite(LED_Pin16,LOW);
-digitalWrite(LED_Pin17,LOW);
-digitalWrite(LED_Pin18,LOW);
-digitalWrite(LED_Pin19,LOW);
-
-
+  digitalWrite(LED_Layer0,HIGH);   // HIGH = layer OFF (common-cathode)
+  digitalWrite(LED_Layer1,HIGH);
+  digitalWrite(LED_Layer2,HIGH);
+  digitalWrite(LED_Layer3,HIGH);
 }
 
 ICStation_Light_cube:: ~ICStation_Light_cube()
@@ -151,27 +151,37 @@ ICStation_Light_cube:: ~ICStation_Light_cube()
 
 
 
-//transfer the data to LED
+// Display one layer per call — multiplexed POV scan
 void ICStation_Light_cube::my_display(unsigned char *planeBuf)
 {
-int i = 0, j = 0;
-for(j = 0; j < 16; j++)
-{
-dight_write_LED_pin(LEDPin[j], LOW);
-}
+  int layer = _scanLayer;
 
-for(j = 0; j < 16; j++)
-{
-      for(i = 0; i < 4; i++)
-       {
-        if(planeBuf[j] >> i & B0001)
-         {
-         dight_write_LED_pin(LEDPin[4 * (j % 4) + i], HIGH);
-         }
-}
-}
+  // Build the 16-bit HC595 word for this layer only
+  HC_595_Temp = 0;
+  for(int col = 0; col < 16; col++)
+  {
+    if(planeBuf[col] >> layer & B0001)
+    {
+      HC_595_Temp |= _BV(15 - (4 * (col % 4) + layer));
+    }
+  }
+  write_74HC595();
 
+  // Turn off all layers, then turn on the current one
+  digitalWrite(LED_Layer0, HIGH);
+  digitalWrite(LED_Layer1, HIGH);
+  digitalWrite(LED_Layer2, HIGH);
+  digitalWrite(LED_Layer3, HIGH);
 
+  switch(layer) {
+    case 0: digitalWrite(LED_Layer0, LOW); break;
+    case 1: digitalWrite(LED_Layer1, LOW); break;
+    case 2: digitalWrite(LED_Layer2, LOW); break;
+    case 3: digitalWrite(LED_Layer3, LOW); break;
+  }
+
+  // Next call shows the next layer
+  _scanLayer = (layer + 1) & 3;
 }
 
 
@@ -185,23 +195,25 @@ void ICStation_Light_cube::write_74HC595(void){
    shiftOut(dataPin, clockPin, LSBFIRST, (HC_595_Temp >> 8));
    digitalWrite(latchPin, HIGH);
    digitalWrite(HC_595_E, LOW);  
- }
+}
  
  
- /*******************************************************************
- * parameter：1.Value：74HC595 Pin number
+/*******************************************************************
+* parameter：1.Value：74HC595 Pin number
 *             2.charge： output LOW or High 
- *function:  To convert 74 hc595 are needed for the I/o output
- *           note:for other application the Value should be lower 16
- *******************************************************************/
- void ICStation_Light_cube::dight_write_LED_pin( int value,int charge)
- {
-   if(value > 19) return;
-   if(charge != LOW && charge != HIGH) return;
+*function:  To convert 74 hc595 are needed for the I/o output
+*           note: values 0-15 = 74HC595 bits, 16-19 = layer pins
+*******************************************************************/
+void ICStation_Light_cube::dight_write_LED_pin( int value,int charge)
+{
+  if(value > 19) return;
+
+  if(charge != LOW && charge != HIGH) return;
+
   if(charge == LOW) 
   {
-   switch (value)
-   {
+    switch (value)
+    {
      case 0:  HC_595_Temp &=~_BV(15); break;
      case 1:  HC_595_Temp &=~_BV(14); break;
      case 2:  HC_595_Temp &=~_BV(13); break;
@@ -218,14 +230,16 @@ void ICStation_Light_cube::write_74HC595(void){
      case 13:  HC_595_Temp &=~_BV(2); break;
      case 14:  HC_595_Temp &=~_BV(1); break;
      case 15:  HC_595_Temp &=~_BV(0); break; 
-     case 16: digitalWrite(LED_Pin16,LOW); break;
-      case 17: digitalWrite(LED_Pin17,LOW); break;   
-   }
+     case 16: digitalWrite(LED_Layer0,LOW); break;
+      case 17: digitalWrite(LED_Layer1,LOW); break;
+      case 18: digitalWrite(LED_Layer2,LOW); break;
+      case 19: digitalWrite(LED_Layer3,LOW); break;   
+    }
   }
   else
   {
     switch (value)
-   {
+    {
      case 0:  HC_595_Temp |=_BV(15); break;
      case 1:  HC_595_Temp |=_BV(14); break;
      case 2:  HC_595_Temp |=_BV(13); break;
@@ -242,43 +256,33 @@ void ICStation_Light_cube::write_74HC595(void){
      case 13:  HC_595_Temp |=_BV(2); break;
      case 14:  HC_595_Temp |=_BV(1); break;
      case 15:  HC_595_Temp |=_BV(0); break;  
-     case 16: digitalWrite(LED_Pin16,HIGH); break;
-     case 17: digitalWrite(LED_Pin17,HIGH); break;    
-   }   
+     case 16: digitalWrite(LED_Layer0,HIGH); break;
+      case 17: digitalWrite(LED_Layer1,HIGH); break;
+      case 18: digitalWrite(LED_Layer2,HIGH); break;
+      case 19: digitalWrite(LED_Layer3,HIGH); break;    
+    }   
   }
-     write_74HC595();
- }
+  write_74HC595();
+}
 
-
-
-
-
-
- void ICStation_Light_cube::run_example(void)
- {
-
-unsigned char PatternBuf[16]; // saves current pattern from PatternTable
-
-// loop over entries in pattern table – while PatternIdx < PatternMax
-int i = 0;
-
-if(ICStation_delay == ICStation_delay_MAX)
+void ICStation_Light_cube::run_example(void)
 {
- ICStation_delay = 0;
- for(i = 0; i < 16; i++)
-{
-PatternBuf[i] = PatternTable[PatternIdx++];
+  // Load new frame when delay counter fires
+  if(ICStation_delay >= ICStation_delay_MAX)
+  {
+    ICStation_delay = 0;
+    for(int i = 0; i < 16; i++)
+    {
+      _frameBuffer[i] = pgm_read_byte(&PatternTable[PatternIdx++]);
+    }
+    PatternIdx++;  // skip embedded delay byte
+    if(PatternIdx >= PatternMax) PatternIdx = 0;
+  }
+  else
+  {
+    ICStation_delay++;
+  }
+
+  // Display one layer every call — continuous POV multiplexing
+  my_display(_frameBuffer);
 }
-my_display(PatternBuf);
-PatternIdx++; 
-if(PatternIdx >= PatternMax) PatternIdx =0;
- 
-}
-else{
- ++ICStation_delay; 
-}
-
-
- }
-
-
