@@ -16,18 +16,28 @@ Arduino IDE, select an Arduino Uno board, and verify/compile.
 
 | File | Purpose |
 |------|---------|
-| `ICStation_Light_cube.h` | Class declaration, pin constants, PROGMEM pattern table |
+| `ICStation_Light_cube.h` | Class declaration, pin constants, pattern state |
 | `ICStation_Light_cube.cpp` | Implementation: POV multiplexing, shift register control, frame animation |
 | `examples/Specialeffects/Specialeffects.ino` | Minimal example — instantiates the class and calls `run_example()` in `loop()` |
 | `README.md` | Full documentation: wiring, bit layout, pipeline, fixes applied |
+
+## Boot Sequence
+
+On power-up, the cube runs a countdown animation (9 → 1) that runs
+for 36 frame steps before normal pattern cycling begins. Each digit
+is a 4×4 pixel image rendered across all 4 cube layers. The digit
+scrolls downward through the layers over 4 steps, then the next
+digit appears.
 
 ## Architecture Summary
 
 - **2× 74HC595** shift registers → 16 column anodes (LSB-first shiftOut)
 - **4 digital pins** (4-7) → layer cathodes via NPN transistors. `LOW` = layer ON
 - **POV multiplexing:** one layer per `loop()` iteration, cycling 0→1→2→3→0→...
-- **Pattern data:** stored in Flash via PROGMEM (~1.8 KB), loaded into a
-  persistent 16-byte `_frameBuffer` every `ICStation_delay_MAX` iterations
+- **Pattern data:** generated programmatically by 10 pattern functions in
+  `ICStation_Light_cube.cpp`. Each function fills the 16-byte `_frameBuffer`
+  based on a frame counter. A `patterns[]` schedule table defines each
+  function's frame length and cycles through them automatically.
 
 ## Fixes & Enhancements Applied (history for context)
 
@@ -39,6 +49,12 @@ Arduino IDE, select an Arduino Uno board, and verify/compile.
 4. **Completed switch cases** — Added cases 18-19 to `dight_write_LED_pin()`
 5. **Added state** — `_frameBuffer[16]` for persistent frame storage,
    `_scanLayer` for multiplexing position
+6. **Boot sequence** — Added countdown (9 → 1) that runs on power-up
+   before normal patterns start. Digits scroll downward through the layers.
+7. **Programmatic patterns** — Replaced the hardcoded ~1.8 KB PatternTable
+   array with 10 algorithmically generated patterns (staircase, layer sweep,
+   column sweep, checkerboard, sparkle, rain, expanding box, snake,
+   bar graph, blink). Patterns cycle automatically via a schedule table.
 
 ## Important Notes for Future Work
 

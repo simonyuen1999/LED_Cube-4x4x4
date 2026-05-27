@@ -39,7 +39,6 @@ class ICStation_Light_cube {
  private:
   static int LEDPin[];
   static int PlanePin[4];
-  static const unsigned char PatternTable[];
   static int clockPin;  //SH_CP of 74HC595 
   static int latchPin;  //ST_CP of 74HC595 
   static int dataPin;  //DS of 74HC595 
@@ -50,10 +49,10 @@ class ICStation_Light_cube {
   static int LED_Layer3;  
   static unsigned int HC_595_Temp;   //74HC595write_temp
   static int  ICStation_delay;
-  static int PatternIdx ;// indexes which byte from pattern buffer
-  static int PatternMax;
+  static int _patternFrame;
   static unsigned char _frameBuffer[16];
   static int _scanLayer;
+  static int _bootStep;
 
   void write_74HC595(void);  //write data to 74HC5595
 };

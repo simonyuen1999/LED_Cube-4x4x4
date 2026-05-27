@@ -59,9 +59,15 @@ For example, to light the LED at column group 2, layer 1:
 ```
 loop()
   └─ run_example()
-       ├─ Every ICStation_delay_MAX iterations:
-       │     load next 16-byte frame from PROGMEM PatternTable
-       │     into _frameBuffer
+       ├─ If _bootStep > 0 (boot sequence):
+       │     every ICStation_delay_MAX iterations:
+       │       render digit (9→1) scrolling down 1 layer step
+       │       _bootStep--
+       │
+       ├─ Else (normal patterns):
+       │     every ICStation_delay_MAX iterations:
+       │       generate next 16-byte frame via current pattern
+       │       function into _frameBuffer
        │
        └─ Every iteration: my_display(_frameBuffer)
             └─ Show one layer:
@@ -72,16 +78,40 @@ loop()
                  5. Advance _scanLayer (0→1→2→3→0→...)
 ```
 
-## Pattern Table
+## Pattern Generators
 
-`PatternTable[]` stores ~108 animation frames in **Flash** (PROGMEM),
-not SRAM. Each frame is 17 bytes:
+Animation patterns are generated programmatically by 10 functions in
+`ICStation_Light_cube.cpp`. Each function fills the 16-byte `_frameBuffer`
+based on a frame counter. A `patterns[]` schedule table defines each
+function's frame length and cycles through them automatically.
 
-- 16 bytes of column data
-- 1 byte frame-delay placeholder (skipped during playback)
+### Available patterns
 
-The table is read-only. `PatternMax = sizeof(PatternTable)` determines
-the wrap-around point.
+| # | Name | Frames | Behavior |
+|---|------|--------|----------|
+| 1 | Staircase | 32 | Columns fill diagonally — stair-step wave across the cube |
+| 2 | Layer Sweep | 8 | One full layer plane at a time, sweeping up then down |
+| 3 | Column Sweep | 16 | Full-height columns sweep left to right |
+| 4 | Checkerboard | 4 | Alternating LEDs toggle every frame |
+| 5 | Sparkle | 64 | Pseudo-random LEDs blink (LCG, no analogRead needed) |
+| 6 | Rain | 32 | Drops fall from top layer to bottom, staggered |
+| 7 | Expanding Box | 8 | Lit region expands from center then contracts |
+| 8 | Snake | 64 | Single LED traces through all 16 columns × 4 layers |
+| 9 | Bar Graph | 16 | Rotating bar heights per column |
+| 10 | Blink | 4 | All LEDs on/off
+
+## Boot Sequence
+
+On power-up, the cube runs a countdown animation before cycling through
+the normal patterns. Digits **9 through 1** appear as 4×4 pixel images at
+the top layer and scroll downward through the cube layer by layer. Each
+digit takes 4 scroll steps (fully visible → almost off-screen), and the
+entire sequence lasts ~36 seconds at `ICStation_delay_MAX = 10000`.
+
+The boot state is tracked by `_bootStep`, which starts at 36 and counts
+down to 0. During the boot phase, `run_example()` calls `renderBootDigit()`
+instead of the pattern generator. Once `_bootStep` reaches 0, normal pattern
+cycling begins automatically.
 
 ## Fixes & Enhancements Applied
 
@@ -116,6 +146,36 @@ The rewrite implements proper time-division multiplexing: one layer per
 The switch statement only handled values 0-17. Values 18-19 were silent
 no-ops. Now cases 18 and 19 control `LED_Layer2` and `LED_Layer3`.
 
+### 4. Boot sequence countdown
+
+A startup countdown (9 → 1) was added. Each digit is rendered as a 4×4
+pixel image across all 4 cube layers, then scrolls downward through the
+cube before the next digit appears. Uses `digitFont[10][4]` and
+`renderBootDigit()` for the scrolling effect.
+
+**Files changed:**
+- `ICStation_Light_cube.h`: added `_bootStep` member
+- `ICStation_Light_cube.cpp`: added `digitFont[][]` array, `renderBootDigit()`
+  function, and boot-phase logic in `run_example()`
+
+### 5. Programmatic pattern generation
+
+The original `PatternTable[]` was a ~1.8 KB hardcoded array of ~108 frames
+stored in Flash via PROGMEM. It was replaced with 10 algorithmically
+generated pattern functions. Each function fills the 16-byte `_frameBuffer`
+using a frame counter, creating dynamic, memory-free animations. A pattern
+schedule table cycles through them automatically.
+
+**Files changed:**
+- `ICStation_Light_cube.h`: removed `PatternTable`, `PatternIdx`, `PatternMax`
+  declarations; added `_patternFrame`
+- `ICStation_Light_cube.cpp`: removed the entire PatternTable array and all
+  PROGMEM/pgm_read_byte references; added 10 pattern generator functions
+  (`genStaircase`, `genLayerSweep`, `genColumnSweep`, `genCheckerboard`,
+  `genSparkle`, `genRain`, `genExpandingBox`, `genSnake`, `genBarGraph`,
+  `genBlink`); added a `patterns[]` schedule table; rewrote `run_example()`
+  to call pattern functions instead of reading from the table
+
 ## API Reference
 
 ### `ICStation_Light_cube()`
@@ -134,8 +194,8 @@ Shift out `HC_595_Temp` (16 bits, LSB-first) to the cascaded 74HC595s
 and latch the outputs.
 
 ### `void run_example()`
-Main animation driver. Call from `loop()`. Manages frame loading
-from PROGMEM and calls `my_display()` every iteration for continuous
+Main animation driver. Call from `loop()`. Cycles through 10 pattern
+generators, calling `my_display()` every iteration for continuous
 POV multiplexing.
 
 ## Example
